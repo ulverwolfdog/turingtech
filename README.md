@@ -49,26 +49,6 @@ proceso adicional y complejidad de despliegue sin aportar nada que estas
 tools no resuelvan ya — se reserva para cuando haya que integrar un
 sistema de terceros que ya exponga un servidor MCP propio.
 
-## Estructura del proyecto
-
-```
-mtg-chatbot/
-├── data/
-│   └── reglamento_demo.md      # Extracto de reglas de ejemplo (ver nota abajo)
-├── rag/
-│   ├── ingest.py                # Indexado del reglamento en FAISS
-│   └── index/                   # (generado) índice vectorial local
-├── tools/
-│   ├── rag_tools.py              # Tool de búsqueda semántica sobre el reglamento
-│   └── mtg_api_tools.py          # Tools sobre la API de magicthegathering.io
-├── agents/
-│   └── specialists.py            # Construcción de los 3 agentes (create_react_agent)
-├── graph/
-│   └── supervisor.py             # Grafo supervisor (router + handoff)
-├── main.py                       # CLI de demo
-└── requirements.txt
-```
-
 ## Instalación
 
 ```bash
@@ -152,4 +132,3 @@ Quiero una carta de Han Solo, blanca-roja, que tenga daño primero
 - No hay memoria persistente entre sesiones ni checkpointing (LangGraph
   soporta ambos de forma nativa — ver sección de producción en
   `docs/arquitectura.md`).
->>>>>>> 2cef484 (second commit)

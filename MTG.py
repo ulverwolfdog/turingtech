@@ -575,7 +575,7 @@ def main():
         build_index(path_to_rules)
     except Exception as exc:
         print(f"[ingest] ERROR: {exc}", file=sys.stderr)
-    sys.exit(1)
+        sys.exit(1)
     
     print("Construyendo el grafo del chatbot (supervisor + agentes)...")
     app = build_graph()
