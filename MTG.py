@@ -6,12 +6,16 @@
 ##
 ###########################################################################################
 
-## Load libraries 
+'''
+
+Load libraries 
+
+'''
 
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Literal
 import requests
 
 from langchain_core.messages import HumanMessage
@@ -23,8 +27,19 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.tools import tool
 from langchain_core.tools.retriever import create_retriever_tool
+from langchain_core.messages import SystemMessage
+from langchain_groq import ChatGroq
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.types import Command
+from pydantic import BaseModel, Field
 
-# Asignación de variables y rutas
+'''
+
+CONFIGURACIÓN Y PARAMETRIZACIÓN DEL CHATBOT
+
+Asignación de variables y rutas
+
+'''
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 INDEX_DIR = Path(".") / "index"
@@ -35,6 +50,77 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 chunk_size = 800
 chunk_overlap = 150
+path_to_rules = "./data/MagicCompRules 20260417.pdf"
+
+'''
+
+Definición de los prompts
+
+'''
+
+RAG_AGENT_PROMPT = (
+    "Eres un juez experto de Magic: The Gathering especializado en reglas. "
+    "Respondes dudas de reglas básicas (fases del turno, maná, prioridad, la "
+    "pila...) e interacciones entre habilidades de cartas.\n\n"
+    "SIEMPRE debes usar la tool `search_mtg_rules` antes de responder, aunque "
+    "creas conocer la respuesta, para fundamentar tu explicación en el "
+    "reglamento. Si la pregunta menciona cartas concretas, razona paso a paso "
+    "sobre qué reglas generales aplican a las habilidades mencionadas.\n\n"
+    "Formato de respuesta:\n"
+    "1. Respuesta directa y clara a la pregunta.\n"
+    "2. Explicación breve del razonamiento.\n"
+    "3. Cita la regla o fragmento del reglamento en que te basas.\n\n"
+    "Si el reglamento indexado no cubre el caso con suficiente detalle, dilo "
+    "explícitamente en vez de inventar la regla, y sugiere escalar a un "
+    "agente humano del call center."
+)
+
+API_AGENT_PROMPT = (
+    "Eres un asistente especializado en la base de datos de cartas de Magic: "
+    "The Gathering. Ayudas a los usuarios a encontrar cartas según su "
+    "descripción (color, coste de maná, tipo, texto de habilidad, nombre) y "
+    "a consultar novedades y sets recientes.\n\n"
+    "Usa la tool `search_cards` para búsquedas por criterios, `get_card_by_name` "
+    "cuando el usuario mencione una carta concreta por nombre, y "
+    "`get_recent_sets` para preguntas sobre las últimas expansiones/novedades.\n\n"
+    "Presenta los resultados de forma clara y concisa (nombre, coste, colores, "
+    "tipo, texto de reglas resumido, e imagen si está disponible). Si no "
+    "encuentras resultados, dilo claramente y sugiere relajar algún criterio "
+    "de búsqueda."
+)
+
+CARD_CREATOR_PROMPT = (
+    "Eres un diseñador de cartas custom de Magic: The Gathering. El usuario te "
+    "pedirá crear una carta original (por ejemplo, basada en un personaje o "
+    "concepto).\n\n"
+    "Entrega la carta en este formato:\n"
+    "- Nombre\n"
+    "- Coste de maná (usa la notación estándar, p. ej. {1}{R}{W})\n"
+    "- Tipo (p. ej. Criatura Legendaria — Humano Pícaro)\n"
+    "- Texto de reglas (habilidades con nomenclatura oficial, p. ej. 'Daño "
+    "primero', 'Arrollar')\n"
+    "- Poder/Resistencia (si aplica)\n"
+    "- Una línea de sabor (flavor text)\n"
+    "- Una breve justificación de por qué el coste/estadísticas están "
+    "balanceados, citando la carta real usada como referencia."
+)
+
+SUPERVISOR_SYSTEM_PROMPT = (
+    "Eres el supervisor de un chatbot de atención al cliente para el juego "
+    "Magic: The Gathering. Tu única tarea es analizar el último mensaje del "
+    "usuario (con el resto de la conversación como contexto) y decidir a qué "
+    "agente especializado enviarlo:\n\n"
+    "- rag_agent: preguntas de reglas básicas del juego (fases del turno, "
+    "maná, prioridad, la pila...) o preguntas sobre cómo interactúan las "
+    "habilidades de cartas EXISTENTES entre sí (p. ej. daño primero al "
+    "cambiar de controlador).\n"
+    "- api_agent: el usuario busca cartas reales según una descripción "
+    "(color, coste, tipo, texto...), pide el detalle/imagen de una carta "
+    "concreta, o pregunta por novedades/últimos sets.\n"
+    "- card_creator_agent: el usuario pide crear, diseñar o inventar una "
+    "carta custom nueva (que no existe en el juego).\n\n"
+    "No respondas la pregunta tú mismo, solo decide el enrutado."
+)
 
 """
 
@@ -207,22 +293,17 @@ def get_rules_search_tool():
 
 
 """
-tools/mtg_api_tools.py
------------------------
+
 Tools de LangChain que consultan la API pública de Magic: The Gathering
-(https://docs.magicthegathering.io/) para:
+(https://docs.magicthegathering.io/):
 
   - Buscar cartas por criterios (color, coste de maná, tipo, texto, nombre...)
   - Obtener el detalle/imagen de una carta concreta
   - Listar sets recientes (para dudas sobre "nuevos releases")
 
-Estas tools se usan desde el "agente API", especializado en búsqueda de
-cartas y en aportar contexto real (cartas existentes) para la creación de
-cartas custom.
+Estas tools las usa el "Agente especialista API", especializado en búsqueda de
+cartas.
 
-Nota de producción: en producción esta llamada debería pasar por una capa
-de caché (Redis) y un circuit breaker, ver docs/arquitectura.md. Para la
-demo se hace una llamada HTTP directa con timeout y manejo de errores básico.
 """
 
 @tool
@@ -367,137 +448,67 @@ def get_recent_sets(page_size: int = 5) -> str:
     ]
     return "\n".join(lines)
 
-# %% [markdown]
-# # Specialist
 
-# %% [markdown]
-# ## Functions
+'''
 
-# %%
-"""
-agents/specialists.py
-----------------------
-Construye los agentes especializados usando `create_react_agent`, el
-agente ReAct pre-construido de LangGraph (langgraph.prebuilt). Cada agente
-es en sí mismo un grafo compilado, que luego se usa como nodo dentro del
-grafo supervisor (ver graph/supervisor.py).
+AGENTES ESPECIALIZADOS (RAG; API; CARD CREATOR)
+
+Construye los agentes especializados usando el framework de IA Agéntica
+LangGraph.
 
 Agentes:
   - rag_agent: resuelve dudas de reglas básicas e interacciones entre
     cartas, apoyándose en la tool de búsqueda semántica sobre el reglamento.
   - api_agent: busca cartas reales y responde preguntas sobre novedades,
     usando las tools que consultan la API de magicthegathering.io.
-  - card_creator_agent (bonus): diseña cartas custom, usando la búsqueda de
-    cartas reales como referencia de balance y estilo.
+  - card_creator_agent: diseña cartas custom
 
-Modelo LLM: Groq (baja latencia, adecuado para un chatbot de call center
-en tiempo real).
-"""
+La API para llamar al modelo LLM es un tier gratuito de Groq  y el modelo empleado 
+en esta demo es llama-3.3-70b-versatile.
 
-def _llm(temperature: float = 0.0) -> ChatGroq:
+'''
+
+def llm(temperature: float = 0.0) -> ChatGroq:
     return ChatGroq(model=GROQ_MODEL, temperature=temperature)
-
-
-RAG_AGENT_PROMPT = (
-    "Eres un juez experto de Magic: The Gathering especializado en reglas. "
-    "Respondes dudas de reglas básicas (fases del turno, maná, prioridad, la "
-    "pila...) e interacciones entre habilidades de cartas.\n\n"
-    "SIEMPRE debes usar la tool `search_mtg_rules` antes de responder, aunque "
-    "creas conocer la respuesta, para fundamentar tu explicación en el "
-    "reglamento. Si la pregunta menciona cartas concretas, razona paso a paso "
-    "sobre qué reglas generales aplican a las habilidades mencionadas.\n\n"
-    "Formato de respuesta:\n"
-    "1. Respuesta directa y clara a la pregunta.\n"
-    "2. Explicación breve del razonamiento.\n"
-    "3. Cita la regla o fragmento del reglamento en que te basas.\n\n"
-    "Si el reglamento indexado no cubre el caso con suficiente detalle, dilo "
-    "explícitamente en vez de inventar la regla, y sugiere escalar a un "
-    "agente humano del call center."
-)
-
-API_AGENT_PROMPT = (
-    "Eres un asistente especializado en la base de datos de cartas de Magic: "
-    "The Gathering. Ayudas a los usuarios a encontrar cartas según su "
-    "descripción (color, coste de maná, tipo, texto de habilidad, nombre) y "
-    "a consultar novedades y sets recientes.\n\n"
-    "Usa la tool `search_cards` para búsquedas por criterios, `get_card_by_name` "
-    "cuando el usuario mencione una carta concreta por nombre, y "
-    "`get_recent_sets` para preguntas sobre las últimas expansiones/novedades.\n\n"
-    "Presenta los resultados de forma clara y concisa (nombre, coste, colores, "
-    "tipo, texto de reglas resumido, e imagen si está disponible). Si no "
-    "encuentras resultados, dilo claramente y sugiere relajar algún criterio "
-    "de búsqueda."
-)
-
-CARD_CREATOR_PROMPT = (
-    "Eres un diseñador de cartas custom de Magic: The Gathering. El usuario te "
-    "pedirá crear una carta original (por ejemplo, basada en un personaje o "
-    "concepto).\n\n"
-    "Entrega la carta en este formato:\n"
-    "- Nombre\n"
-    "- Coste de maná (usa la notación estándar, p. ej. {1}{R}{W})\n"
-    "- Tipo (p. ej. Criatura Legendaria — Humano Pícaro)\n"
-    "- Texto de reglas (habilidades con nomenclatura oficial, p. ej. 'Daño "
-    "primero', 'Arrollar')\n"
-    "- Poder/Resistencia (si aplica)\n"
-    "- Una línea de sabor (flavor text)\n"
-    "- Una breve justificación de por qué el coste/estadísticas están "
-    "balanceados, citando la carta real usada como referencia."
-)
 
 
 def build_rag_agent():
     tools = [get_rules_search_tool()]
-    return create_agent(_llm(), tools, system_prompt=RAG_AGENT_PROMPT, name="rag_agent")
+    return create_agent(llm(), tools, system_prompt=RAG_AGENT_PROMPT, name="rag_agent")
 
 
 def build_api_agent():
     tools = [search_cards, get_card_by_name, get_recent_sets]
-    return create_agent(_llm(), tools, system_prompt=API_AGENT_PROMPT, name="api_agent")
+    return create_agent(llm(), tools, system_prompt=API_AGENT_PROMPT, name="api_agent")
 
 
 def build_card_creator_agent():
     tools = [search_cards, get_card_by_name]
-    return create_agent(_llm(temperature=0.7), tools, system_prompt=CARD_CREATOR_PROMPT, name="card_creator_agent")
+    return create_agent(llm(temperature=0.7), tools, system_prompt=CARD_CREATOR_PROMPT, name="card_creator_agent")
 
 
-# %% [markdown]
-# # Supervisor
+'''
 
-# %% [markdown]
-# ## Functions
+AGENTE SUPERVISOR (ROUTER) Y ERNTRADA DEL USUARIO AL CHATBOT
 
-# %%
-"""
-graph/supervisor.py
---------------------
-Grafo principal (supervisor/router) del chatbot. Un nodo "supervisor"
-clasifica la intención del usuario y usa el patrón de *handoff* con
-`Command(goto=...)` de LangGraph para enviar la conversación al agente
+El nodo supervisor clasifica la intención del usuario y usa el patrón de handoff (paso de control) 
+meiante `Command(goto=...)` de LangGraph para enviar la conversación al agente
 especializado correspondiente:
 
   - rag_agent          -> dudas de reglas básicas e interacciones entre cartas
   - api_agent          -> búsqueda de cartas / novedades vía API oficial
   - card_creator_agent -> (bonus) creación de cartas custom
 
-Cada agente especializado es a su vez un grafo `create_react_agent` ya
-compilado (ver agents/specialists.py), que aquí se usa directamente como
+Cada agente especializado es a su vez un grafo ya compilado, que aquí se usa directamente como
 nodo del grafo principal.
 
+La estrucutra del grafo resultante sería:
+
     START -> supervisor -> {rag_agent | api_agent | card_creator_agent} -> END
-"""
 
-from typing import Literal
-
-from langchain_core.messages import SystemMessage
-from langchain_groq import ChatGroq
-from langgraph.graph import StateGraph, MessagesState, START, END
-from langgraph.types import Command
-from pydantic import BaseModel, Field
+'''
 
 AgentName = Literal["rag_agent", "api_agent", "card_creator_agent"]
-
-
 class RouteDecision(BaseModel):
     """Decisión de enrutado tomada por el supervisor."""
 
@@ -515,30 +526,18 @@ class RouteDecision(BaseModel):
     reason: str = Field(description="Breve justificación (una frase) de la decisión de enrutado.")
 
 
-SUPERVISOR_SYSTEM_PROMPT = (
-    "Eres el supervisor de un chatbot de atención al cliente para el juego "
-    "Magic: The Gathering. Tu única tarea es analizar el último mensaje del "
-    "usuario (con el resto de la conversación como contexto) y decidir a qué "
-    "agente especializado enviarlo:\n\n"
-    "- rag_agent: preguntas de reglas básicas del juego (fases del turno, "
-    "maná, prioridad, la pila...) o preguntas sobre cómo interactúan las "
-    "habilidades de cartas EXISTENTES entre sí (p. ej. daño primero al "
-    "cambiar de controlador).\n"
-    "- api_agent: el usuario busca cartas reales según una descripción "
-    "(color, coste, tipo, texto...), pide el detalle/imagen de una carta "
-    "concreta, o pregunta por novedades/últimos sets.\n"
-    "- card_creator_agent: el usuario pide crear, diseñar o inventar una "
-    "carta custom nueva (que no existe en el juego).\n\n"
-    "No respondas la pregunta tú mismo, solo decide el enrutado."
-)
-
-
-def _build_router_llm():
+def build_router_llm():
     return ChatGroq(model=GROQ_MODEL, temperature=0).with_structured_output(RouteDecision)
 
 
+'''
+
+Cración y compilación del grafo principal del chatbot, que incluye el nodo supervisor y los agentes especializados.
+
+'''
+
 def build_graph():
-    router_llm = _build_router_llm()
+    router_llm = build_router_llm()
     rag_agent = build_rag_agent()
     api_agent = build_api_agent()
     card_creator_agent = build_card_creator_agent()
@@ -563,6 +562,7 @@ def build_graph():
 
 
 def main():
+    
     if not GROQ_API_KEY:
         print(
             "ERROR: falta la variable de entorno GROQ_API_KEY. "
@@ -571,6 +571,12 @@ def main():
         )
         sys.exit(1)
 
+    try:
+        build_index(path_to_rules)
+    except Exception as exc:
+        print(f"[ingest] ERROR: {exc}", file=sys.stderr)
+    sys.exit(1)
+    
     print("Construyendo el grafo del chatbot (supervisor + agentes)...")
     app = build_graph()
 
