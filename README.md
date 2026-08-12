@@ -1,134 +1,121 @@
-<<<<<<< HEAD
-# turingtech
-=======
-# Chatbot MTG — Demo (LangGraph + Groq + RAG)
+# Demo asistente juego de cartas Magic the gathering
 
-Demo funcional de un chatbot para el call center de Magic: The Gathering,
-capaz de resolver dudas de reglas, interacciones entre cartas, búsqueda de
-cartas por descripción y (bonus) creación de cartas custom.
+***
 
-Para la solución de producción completa (servicios, monitorización,
-escalabilidad, etc.) ver **`docs/arquitectura.md`**.
+# Chatbot MTG (Magic: The Gathering)
 
-## Arquitectura de la demo
+En este proyecto se ha implementado una demo funcional (PoC) de un chatbot para un call center (MTG) que ofrece a los usuarios respuestas sobre el juego de cartas **"Magic: The Gathering"**. El asistente será capaz de resolver dudas de reglas, interacciones entre cartas, búsqueda de cartas por descripción y de crear nuevas cartas usando la descripción proporcionada por el usuario. Para su implementación emplearemos la tecnología RAG, Groq paea acceder a la API de un LLM de forma gratuía, la integración del sistema con la API disponible (https://docs.magicthegathering.io/) para obtener infromación sobre las cartas existentes, y el framework para el desarrollo de agentes de IA LanGraph. 
 
-Un **supervisor** clasifica la intención del usuario y enruta la
-conversación (patrón *handoff* con `Command(goto=...)` de LangGraph) a uno
-de tres agentes especializados, cada uno construido con
-`create_react_agent` (agente ReAct pre-construido de `langgraph.prebuilt`):
-
-```mermaid
-graph TD;
-	__start__([__start__]):::first
-	supervisor(supervisor)
-	rag_agent(rag_agent)
-	api_agent(api_agent)
-	card_creator_agent(card_creator_agent)
-	__end__([__end__]):::last
-	__start__ --> supervisor;
-	supervisor -.-> api_agent;
-	supervisor -.-> card_creator_agent;
-	supervisor -.-> rag_agent;
-	api_agent --> __end__;
-	card_creator_agent --> __end__;
-	rag_agent --> __end__;
-```
-
-*(Diagrama generado directamente desde el grafo real con `app.get_graph().draw_mermaid()`)*
-
-| Agente | Requerimiento que cubre | Tools |
-|---|---|---|
-| `rag_agent` | Reglas básicas + interacciones entre cartas | `search_mtg_rules` (RAG sobre el reglamento) |
-| `api_agent` | Búsqueda de cartas por descripción, novedades | `search_cards`, `get_card_by_name`, `get_recent_sets` (API magicthegathering.io) |
-| `card_creator_agent` | (Bonus) Creación de cartas custom | `search_cards`, `get_card_by_name` (como referencia de balance) |
-
-No se usa MCP: todas las tools son funciones Python estándar decoradas con
-`@tool` (API) o un retriever envuelto con `create_retriever_tool` (RAG),
-ambos mecanismos nativos de LangChain/LangGraph. MCP habría añadido un
-proceso adicional y complejidad de despliegue sin aportar nada que estas
-tools no resuelvan ya — se reserva para cuando haya que integrar un
-sistema de terceros que ya exponga un servidor MCP propio.
+_En pocas palabras, se trata de un sistema multiagente con un supervisor y diferentes agentes especializados en una serie de tareas que pueden realizar empleando las herramientas (tools) implementadas para ello._   
 
 ## Instalación
 
+La instalación del sistema ñunicamente requiere la instalación de las librerías necesarias, la generación de una API Key en Groq (https://console.groq.com) para poder realizar llamadas al LLM, y en caso necesario de la mosificación de las variables de configuración del fichero MTG.py, único fichero de código necesario para la ejecución del asistente. Este programa realiza todas las tareas necesarias para el uso del asistente (gestión de la documentación, RAG, generación de agentes y herramientas, ...). El asistente no tiene una interfaz gráfica, su uso se realizará a travé del terminal de comandos (CLI), tanto en Windows como en Linux. 
+
+En un sistema Linux, los comandos a ejecutar son los siguientes: 
+
 ```bash
 pip install -r requirements.txt
-export GROQ_API_KEY="tu_api_key"          # https://console.groq.com
+export GROQ_API_KEY="tu_api_key"         
 ```
-$env:GROQ_API_KEY = "your-api-key-here" (powershell)
 
-## Indexar el reglamento (RAG)
 
-La demo incluye un extracto reducido de reglas (`data/reglamento_demo.md`)
-para poder probar el pipeline sin depender del PDF oficial. Indícalo así:
+Mientras que en un sistema Windows ejecutaremos en el Powershell los comandos:
 
 ```bash
-python -m rag.ingest --source data/reglamento_demo.md
+pip install -r requirements.txt
+$env:GROQ_API_KEY = "tu_api_key"          
 ```
+En ambos casos se debará sustituir el valor "tu_api_key" por la API Key genererada en Groq. 
 
-Esto descarga (la primera vez) el modelo de embeddings local
-`sentence-transformers/all-MiniLM-L6-v2` y genera el índice FAISS en
-`rag/index/`.
+## Ejecución de la demo
 
-### Sustituir el reglamento por el oficial
-
-Cuando tengas el PDF con el reglamento completo (Comprehensive Rules):
-
-```bash
-python -m rag.ingest --source /ruta/a/reglamento_oficial.pdf
-```
-
-Esto regenera el índice completo. No hace falta cambiar nada más del
-código — el resto del pipeline es agnóstico al contenido indexado.
-
-## Ejecutar la demo
+Para ejecutar el programa, una vez actializados los valores de las variables en el fichero MTG.py, se empleará el siguiente comando, tanto en Linux como en Windows.  
 
 ```bash
 python main.py
 ```
 
-Ejemplos de preguntas a probar:
+Tanto en el proceso de instalación como en el de ejecición de la demo, debemos estar situados en el directorio donde se encuantran los ficheros de este repositotio. En caso contrario, se deberán emplear rutas absolutas en lugar de las rutas relativas. 
 
-```
-¿Qué fases hay en un turno de juego?
-¿Cómo funciona el mana pool?
-Mi criatura con daño primero ha hecho daño primero, si cambio su control con un efecto antes del paso de daño regular, ¿vuelve a hacer daño?
-Busco una carta de color blanco de coste inferior a dos de mana que sea guerrero
-¿Cuáles son los últimos sets que han salido?
-Quiero una carta de Han Solo, blanca-roja, que tenga daño primero
-```
+## Ejemplos
 
-## Notas de diseño relevantes
+Aquí mostramos algunos ejemplos de preguntas que se pueden realizar al asistente, así como las respuestas que ofrece en cada caso:
 
-- **Groq como LLM**: se eligió por su baja latencia (motor LPU), clave para
-  un chatbot de atención en tiempo real en un call center. Modelo por
-  defecto: `llama-3.3-70b-versatile` (configurable con la variable de
-  entorno `GROQ_MODEL`).
-- **Embeddings locales**: se usa un modelo local de HuggingFace
-  (`sentence-transformers`) para no depender de una API de embeddings de
-  pago en la demo. En producción se recomienda un servicio de embeddings
-  gestionado y un vector store dedicado — ver `docs/arquitectura.md`.
-- **Router con salida estructurada**: el supervisor usa
-  `llm.with_structured_output(RouteDecision)` (Pydantic) en vez de parsear
-  texto libre, para que el enrutado sea fiable y fácil de testear.
-- **Grounding obligatorio**: el prompt del `rag_agent` obliga a llamar
-  siempre a `search_mtg_rules` antes de responder y a citar el fragmento
-  del reglamento usado, y el `card_creator_agent` debe apoyarse en cartas
-  reales (vía `api_agent` tools) antes de proponer estadísticas de balance.
-  Esto no garantiza que la respuesta sea correcta, pero sí que sea
-  trazable/justificable, tal como pide el enunciado.
+**Ejemplo 1**
 
-## Limitaciones conocidas de la demo
+**Usuario:** ¿Qué fases hay en un turno de juego?
 
-- El extracto de reglas es reducido: preguntas fuera de las 6 secciones
-  cubiertas (turno, maná, pila, daño primero/doble, cambio de controlador,
-  acciones basadas en estado) no tendrán buen contexto hasta indexar el
-  reglamento oficial completo.
-- La API pública de magicthegathering.io no soporta filtrar directamente
-  por rango de coste de maná ni por combinaciones complejas de color; la
-  tool `search_cards` filtra el CMC sobre los resultados ya devueltos por
-  la API, lo que puede dar menos resultados de los reales si la página de
-  resultados es pequeña (ver `page_size`).
-- No hay memoria persistente entre sesiones ni checkpointing (LangGraph
-  soporta ambos de forma nativa — ver sección de producción en
-  `docs/arquitectura.md`).
+**Asistente MTG:** Las fases de un turno de juego en Magic: The Gathering son:
+
+1. Fase de inicio (Beginning Phase)
+2. Fase principal (Untap Step, Upkeep Step, Draw Step)
+3. Fase de combate (Combat Phase)
+4. Fase de fin (End Phase)
+
+Explicación: Según el reglamento oficial de Magic: The Gathering, un turno de juego se divide en varias fases. La fase de inicio es la primera fase del turno, seguida de la fase principal, que incluye el paso de desbloqueo (Untap Step), el paso de mantenimiento (Upkeep Step) y el paso de robo (Draw Step). Luego viene la fase de combate, donde se producen los combates entre criaturas. Finalmente, el turno termina con la fase de fin.
+
+Cita: "703. Turn-Based Actions" del reglamento oficial de Magic: The Gathering, que describe las acciones basadas en turnos que ocurren automáticamente al comienzo o fin de cada paso o fase del turno.
+
+**Ejemplo 2**
+
+**Usuario:** ¿Cómo funciona el mana pool?
+
+**Asistente MTG:** El mana pool es un concepto fundamental en Magic: The Gathering que se refiere a la cantidad de mana que un jugador tiene disponible para jugar hechizos y habilidades. El mana pool se llena con mana producido por las tierras y otras fuentes de mana, y se vacía al final de cada paso y fase del turno.
+
+Explicación: Según el reglamento oficial de Magic: The Gathering, el mana se produce mediante habilidades de mana y otros efectos, y se agrega al mana pool del jugador. El mana pool es donde se almacena el mana hasta que se utiliza para pagar costos o se vacía al final del turno. Cada jugador tiene su propio mana pool, y el mana se puede utilizar para jugar hechizos y habilidades.
+
+Cita: "106.3. Mana is produced by the effects of mana abilities (see rule 605). It may also be produced by the effects of spells, as well as by the effects of abilities that aren’t mana abilities. A spell or ability that produces mana instructs a player to add that mana. If mana is produced by a spell, the source of that mana is that spell. If mana is produced by an ability, the source of that mana is the source of that ability (see rule 113.7)" y "106.4. When an effect instructs a player to add mana, that mana goes into a player’s mana pool. From there, it can be used to pay costs immediately, or it can stay in the player’s mana pool as unspent mana. Each player’s mana pool empties at the end of each step and phase, and the player is said to" del reglamento oficial de Magic: The Gathering.
+
+**Ejemplo 3**
+
+**Usuario:** Mi criatura con daño primero ha hecho daño primero, si cambio su control con un efecto antes del paso de daño regular, ¿vuelve a hacer daño?
+
+**Asistente MTG:** Si cambias el control de tu criatura con daño primero antes del paso de daño regular, la criatura ya ha realizado su daño primero y no volverá a hacer daño en el paso de daño regular.
+
+Explicación: Según el reglamento oficial de Magic: The Gathering, el daño primero se aplica en el paso de daño de combate, y si la criatura ha realizado su daño primero, no volverá a hacer daño en el mismo paso de daño. Si cambias el control de la criatura antes del paso de daño regular, la criatura ya ha realizado su daño primero y no estará pendiente de hacer daño en el paso de daño regular.
+
+Cita: "509.1. First, if any attacking creatures with first strike (see rule 702.7) are dealt lethal damage, they
+deal combat damage first" y "702.7. First Strike
+702.7a First strike is a static ability that means ‘This creature deals combat damage first’" del reglamento oficial de Magic: The Gathering.
+
+**Ejemplo 4**
+
+**Usuario:** Busco una carta de color blanco de coste inferior a dos de mana que sea guerrero.
+
+**Asistente MTG:** Lo siento, no se encontraron cartas de color blanco con un coste de maná inferior a 2 que sean del tipo Guerrero. Es posible que la carta que estás buscando no exista o que no esté en la base de datos.
+
+Si deseas, puedo intentar buscar de nuevo con criterios ligeramente diferentes. Por ejemplo, puedo buscar cartas de color blanco con un coste de maná de 2 o menos que sean del tipo Guerrero. ¿Te gustaría que intente de nuevo?
+
+**Ejemplo 5**
+
+**Usuario:** ¿Cuáles son los últimos sets que han salido?
+
+**Asistente MTG:** Los últimos sets que han salido son:
+
+- 30th Anniversary Edition (30A) - lanzamiento: 28 de noviembre de 2022, tipo: memorabilia
+- Double Masters 2022 (2X2) - lanzamiento: 8 de julio de 2022, tipo: masters
+
+Es importante tener en cuenta que la información sobre los sets más recientes puede variar dependiendo de la fecha actual y de la fuente de la información. Si necesitas información más actualizada, te recomiendo verificar la página oficial de Magic: The Gathering o otras fuentes confiables.
+
+**Ejemplo 6**
+
+**Usuario:** Quiero crear una carta de Han Solo, blanca-roja, que tenga daño primero.
+
+**Asistente MTG:** Una carta de Han Solo con daño primero sería un excelente agregado a cualquier deck. Aquí te dejo una posible implementación:
+
+*Nombre:* Han Solo, Contrabandista
+
+*Coste de maná:* {1}{R}{W}
+
+*Tipo:* Criatura - Humano Piloto
+
+*Texto de reglas:* Daño primero, vigilante
+
+*Poder/Toughness:* 2/2
+
+*Flavor text:* "Nunca digas nunca... a menos que estés hablando de pagar impuestos."
+
+Justificación: El coste de maná de {1}{R}{W} refleja la naturaleza versátil de Han Solo, que puede ser jugado en decks blancos y rojos. El daño primero y la vigilancia hacen que sea una criatura formidable en el campo de batalla, capaz de dealing daño y proteger a sus aliados. El poder y la resistencia de 2/2 son adecuados para una criatura de su tamaño y habilidades.
+
+Referencia: La carta de Han Solo se inspira en la carta "Ajani's Pridemate" {1}{W}, que tiene una habilidad similar de daño primero y vigilancia. Sin embargo, el coste de maná y las estadísticas de Han Solo están diseñadas para reflejar su personalidad y habilidades únicas en el universo de Star Wars.

@@ -593,7 +593,7 @@ def main():
 
     while True:
         try:
-            user_input = input("You: ").strip()
+            user_input = input("Usuario: ").strip()
         except (EOFError, KeyboardInterrupt):
             break
 
