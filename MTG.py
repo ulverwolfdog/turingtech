@@ -1,10 +1,19 @@
-###########################################################################################
+##############################################################################################################################
 ##
+## Reto Técnico — Data Scientist - AI Engineer
+## Departamento: Delivery
 ##
+## Implementación Técnica: DEMO (PoC)
+## 
+## Nuestro cliente tiene un call center para resolución de dudas y consejos para el juego de cartas Magic the gathering. 
+## Nos pide construir un chatbot para poder automatizar las respuestas a sus clientes. 
+## Para ello nos ha dado un reglamento de juego y una API para poder disponer de imágenes de cartas 
+## y nuevos releases (https://docs.magicthegathering.io/).
 ##
+## Autor: Victor Segura
+## Fecha : 2024-06-17
 ##
-##
-###########################################################################################
+##############################################################################################################################
 
 '''
 
