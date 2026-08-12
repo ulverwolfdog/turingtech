@@ -75,7 +75,7 @@ mtg-chatbot/
 pip install -r requirements.txt
 export GROQ_API_KEY="tu_api_key"          # https://console.groq.com
 ```
-env:GROQ_API_KEY = "your-api-key-here" (powershell)
+$env:GROQ_API_KEY = "your-api-key-here" (powershell)
 
 ## Indexar el reglamento (RAG)
 
