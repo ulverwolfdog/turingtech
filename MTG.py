@@ -483,8 +483,7 @@ def build_api_agent():
 
 
 def build_card_creator_agent():
-    tools = [search_cards, get_card_by_name]
-    return create_agent(llm(temperature=0.7), tools, system_prompt=CARD_CREATOR_PROMPT, name="card_creator_agent")
+    return create_agent(llm(temperature=0.7), [], system_prompt=CARD_CREATOR_PROMPT, name="card_creator_agent")
 
 
 '''
