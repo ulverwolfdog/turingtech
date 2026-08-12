@@ -33,35 +33,46 @@ BASE_URL = "https://api.magicthegathering.io/v1"
 TIMEOUT_SECONDS = 10
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-###########################################################################################
-##
-##
-## FUNCIONES SISTEMA RAG (Reglas de Magic: The Gathering)
-##
-##
-###########################################################################################
+chunk_size = 800
+chunk_overlap = 150
 
 """
-rag/ingest.py
--------------
-Indexa el reglamento de Magic: The Gathering en un vector store local
-(FAISS) para poder hacer búsqueda semántica (RAG) desde el agente de reglas.
 
-Acepta tanto el reglamento oficial en PDF como el extracto de ejemplo en
-Markdown incluido en `data/reglamento_demo.md` (fallback para la demo).
+FUNCIONES GESTIÓN DOCUMENTOS (Reglas de Magic: The Gathering)
 
-Embeddings: se usa un modelo local de HuggingFace (sentence-transformers)
-para que la demo funcione sin depender de una API de embeddings de pago.
-En producción se recomienda un modelo embeddings gestionado (ver
-`docs/arquitectura.md`), pero la interfaz de LangChain es intercambiable
-sin tocar el resto del código.
+Funciones para indexar el reglamento de Magic: The Gathering en una base de datos vectorial local
+(FAISS) para poder hacer búsqueda semántica (RAG) sobre el documento por parte del usuario. 
+Acepta ficheros PDF y Markdown, que deden depositarse en el durectorio 'data/fichero'. Una de las variables
+a definir en la configiración es la ruta del fichero que se desea emplear. 
 
-Uso:
-    python -m rag.ingest --source data/reglamento_demo.md
-    python -m rag.ingest --source data/reglamento_oficial.pdf
+Para realizar los embeddings de los distintos chunks del documento de reglas se usa un modelo local 
+de HuggingFace (sentence-transformers), de esta forma podemos realizar la demo sin recurrir a modelos de pago.
+El cambio por un modelo para los embeddings de pago (OpenAI, Cohere, etc.) es trivial, basta con cambiar 
+la clase HuggingFaceEmbeddings por la clase correspondiente.
+
 """
 
-def _load_documents(source_path: str):
+def load_documents(source_path: str):
+    """Carga un documento de reglas desde disco y lo devuelve como lista de documentos.
+
+    La función valida que la ruta exista, detecta el tipo de fichero por su extensión
+    y usa el loader adecuado:
+
+    - .pdf: usa PyPDFLoader para extraer texto desde archivos PDF.
+    - .md: intenta cargar el contenido con UnstructuredMarkdownLoader y, si falla,
+      recurre a TextLoader como fallback.
+    - cualquier otro formato: usa TextLoader como texto plano.
+
+    Args:
+        source_path: Ruta del archivo que contiene el reglamento o texto base.
+
+    Returns:
+        List[Document]: Documentos cargados por LangChain listos para ser troceados
+        y embebidos en el índice FAISS.
+
+    Raises:
+        FileNotFoundError: Si la ruta indicada no existe.
+    """
     path = Path(source_path)
     if not path.exists():
         raise FileNotFoundError(f"No se encontró el fichero de reglas: {path}")
@@ -81,14 +92,29 @@ def _load_documents(source_path: str):
     return loader.load()
 
 
-def build_index(source_path: str, index_dir: Path = INDEX_DIR) -> None:
+def build_index(source_path: str, index_dir: Path = INDEX_DIR, chunk_size: int = 800, chunk_overlap: int = 150) -> None:
+    """Construye y guarda un índice vectorial FAISS a partir de un documento de reglas.
+
+    La función carga el archivo fuente, lo divide en fragmentos con un splitter
+    semántico, genera embeddings con el modelo configurado y guarda el resultado
+    en el directorio indicado para su uso posterior en búsquedas RAG.
+
+    Args:
+        source_path: Ruta del documento fuente (PDF o Markdown) con el reglamento.
+        index_dir: Directorio donde se almacenará el índice FAISS generado.
+        chunk_size: Tamaño máximo de cada fragmento en tokens/caracteres.
+        chunk_overlap: Superposición entre fragmentos consecutivos para preservar contexto.
+
+    Returns:
+        None: Guarda el índice localmente en disco.
+    """
     print(f"[ingest] Cargando documento: {source_path}")
-    docs = _load_documents(source_path)
+    docs = load_documents(source_path)
     print(f"[ingest] {len(docs)} documento(s) cargado(s)")
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=150,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         add_start_index=True,
         separators=["\n## ", "\n### ", "\n\n", "\n", ". ", " "],
     )
@@ -106,48 +132,65 @@ def build_index(source_path: str, index_dir: Path = INDEX_DIR) -> None:
 
 
 def load_retriever(index_dir: Path = INDEX_DIR, k: int = 4):
-    """Carga el índice ya construido y devuelve un retriever listo para usar."""
-    if not index_dir.exists():
-        raise FileNotFoundError(
-            f"No existe el índice en {index_dir}. Ejecuta primero: "
-            f"python -m rag.ingest --source <ruta_al_reglamento>"
-        )
+    """Carga un índice FAISS guardado y devuelve un retriever para búsquedas semánticas.
+
+    La función reconstruye el vector store a partir del directorio del índice
+    almacenado en disco usando el modelo de embeddings configurado. Luego
+    devuelve un retriever que recupera los `k` fragmentos más relevantes para
+    una consulta del usuario.
+
+    Args:
+        index_dir: Ruta del directorio donde está guardado el índice FAISS.
+        k: Número de fragmentos que devolverá el retriever por consulta.
+
+    Returns:
+        Retriever: Objeto de LangChain listo para buscar documentos relevantes.
+    """
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = FAISS.load_local(
         str(index_dir), embeddings, allow_dangerous_deserialization=True
     )
     return vector_store.as_retriever(search_kwargs={"k": k})
 
-# %% [markdown]
-# # RAG tools
-
-# %% [markdown]
-# ## Functions
-
-# %%
-"""
-tools/rag_tools.py
--------------------
-Expone el reglamento indexado (ver rag/ingest.py) como una tool de
-LangChain mediante `create_retriever_tool`, lista para pasarse a un agente
-`create_react_agent` de LangGraph. Esta es la tool que usa el "agente RAG"
-para responder dudas de reglas e interacciones entre cartas.
 """
 
-_retriever = None
+FUNCIONES SISTEMA RAG (Reglas de Magic: The Gathering)
 
+Expone el reglamento indexado a través de las funciones de gestión de documentos como una tool de
+LangChain mediante lista para pasarse a un agente de LangGraph. Esta es la tool que usa el 
+"Agente especialista RAG" para responder dudas de reglas e interacciones entre cartas.
+
+"""
+
+retriever = None
+
+'''
+
+Definición de la tool de búsqueda semántica sobre el reglamento de Magic: The Gathering.
+En este caso el docstring nos sirve para documentar la tool y explicar su uso, lo que permitirá
+al agente RAG decidir cuándo usarla (en función de la consulta del usuario) y cómo.
+
+'''
 
 def get_rules_search_tool():
     """
-    Devuelve (con carga perezosa, una sola vez) la tool de búsqueda semántica
-    sobre el reglamento de Magic: The Gathering.
+    Devuelve la tool de búsqueda semántica sobre el reglamento de Magic: The Gathering.
+    
+    La herramienta usa el índice FAISS ya cargado para recuperar los fragmentos
+    más relevantes a partir de una pregunta o descripción del estado del juego.
+    Se usa principalmente para responder dudas sobre reglas, fases del turno,
+    prioridad, pila y interacciones entre cartas.
+
+    Returns:
+        Tool: herramienta de LangChain preparada para ser añadida a un agente.
+            
     """
-    global _retriever
-    if _retriever is None:
-        _retriever = load_retriever()
+    global retriever
+    if retriever is None:
+        retriever = load_retriever()
 
     return create_retriever_tool(
-        _retriever,
+        retriever,
         name="search_mtg_rules",
         description=(
             "Busca en el reglamento oficial de Magic: The Gathering fragmentos "
@@ -155,20 +198,14 @@ def get_rules_search_tool():
             "turno, maná, prioridad, la pila, acciones basadas en estado, etc.) "
             "o sobre interacciones entre habilidades de cartas (p. ej. daño "
             "primero, daño doble, cambio de controlador en combate). "
-            "Argumento: una pregunta o descripción de la situación de juego en "
+            "La entrada será una pregunta o descripción de la situación de juego en "
             "lenguaje natural. Úsala siempre antes de responder cualquier "
-            "pregunta de reglas, para poder citar el fragmento del reglamento "
+            "pregunta de reglas, y cita siempre el fragmento del reglamento "
             "en el que se basa la respuesta."
         ),
     )
 
-# %% [markdown]
-# # MTG API tools
 
-# %% [markdown]
-# # Functions
-
-# %%
 """
 tools/mtg_api_tools.py
 -----------------------
@@ -187,7 +224,6 @@ Nota de producción: en producción esta llamada debería pasar por una capa
 de caché (Redis) y un circuit breaker, ver docs/arquitectura.md. Para la
 demo se hace una llamada HTTP directa con timeout y manejo de errores básico.
 """
-
 
 @tool
 def search_cards(
