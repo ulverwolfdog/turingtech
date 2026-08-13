@@ -6,7 +6,7 @@
 
 Para desarrollar la demo (PoC) he tomado la decisión de simplificar la implementación y en lugar de dividir los módulos en distintos ficheros generar un único py (con la función main) y separar los distintos servicios mediante comentarios. De esta forma, la lectura y el mantenimiento del código se simplifica. 
 
-Inicialmente cargamos las librerías necesarias, a continuación tenemos la configuración de la PoC (variables, paths, prompts,, ...) que pueden ser modificados para ejecutar el programa con distintos parámetros (por ejemplo con una actualización del manual del juego). La API Key para el uso del modelo LLM se lee mediante una variable de entorno.
+Inicialmente cargamos las librerías necesarias, a continuación tenemos la configuración de la PoC (variables, paths, prompts, ...) que pueden ser modificados para ejecutar el programa con distintos parámetros (por ejemplo con una actualización del manual del juego). La API Key para el uso del modelo LLM se lee mediante una variable de entorno.
 
 ## Arquitectura de la solución
 
@@ -15,9 +15,9 @@ Para implementar el chatbot la arquitectura elegida es la de un sistema de IA mu
 Se ha empleado Python (v.3.14) para la implemetación y a continuación se enumeran las principales decisiones de diseño, teniendo en cuante que todo lo empleado, incluidos los modelos, son de acceso gratuito:
 
 - Para el desasrrollo de los agentes se emplea el framework LangGraph.
-- El sistema RAG para interrogar al manual del usuario también está basado en herramientas dee LangGraph. El chunking del ducumento se realiza con LangGraph, los embbedings se calculan mediante un modelo de HuggingFace que es necesario descargar para poder emplearlo (sentence-transformers/all-MiniLM-L6-v2), y los índices generados se almacenan en la base de datos vectorial FAISS. Los ídices se almancenan en el directorio ./index.
-- Las herramientas se han implementado para que sean copmpatibles con los agentes de LangGraph.
-- Cada agente es un grafo, y a partir de todos esos grafos se genera la solución final aladiendo los vértices necesario (ver Figura).
+- El sistema RAG para interrogar al manual del usuario también está basado en herramientas de LangGraph. El chunking del ducumento se realiza con LangGraph, los embeddings se calculan mediante un modelo de HuggingFace que es necesario descargar para poder emplearlo (sentence-transformers/all-MiniLM-L6-v2), y los índices generados se almacenan en la base de datos vectorial FAISS. Los ídices se almancenan en el directorio ./index.
+- Las herramientas se han implementado para que sean compatibles con los agentes de LangGraph.
+- Cada agente es un grafo, y a partir de todos esos grafos se genera la solución final añadiendo los vértices necesarios (ver Figura).
 - Al modelo LLM se accede a través de Groq, que ofrece una versión gratuita y permite generar una API Key para hacer las llamadas (llama-3.3-70b-versatile). Este mdelo open source tiene limitaciones pero tiene la capacidad necesaria para alcanzas los objetivos de la demo.    
 
 En la siguiente Figura podemos ver la representación en forma de grafo del sistema multiagente:
