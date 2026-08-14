@@ -170,7 +170,7 @@ def embed(texts: list[str], max_retries: int) -> list[list[float]]:
                 input=texts,
                 api_key=API_KEY
             )
-            return [item["embedding"] for item in response["data"]
+            return [item["embedding"] for item in response["data"]]
         except Exception as e:
             if attempt < max_retries - 1:
                 print(f"Error creando los embeddings (intento {attempt + 1}/{max_retries}): {e}")
@@ -232,7 +232,7 @@ def build_context(retrieved: list[dict]) -> str:
 
 # Función ask para realizar la consulta al modelo de lenguaje
 
-def ask(question: str, history: list[tuple[str, str]] | None = None, max_retries: int) -> tuple[str, list[dict]]:
+def ask(question: str, history: list[tuple[str, str]] | None = None, max_retries: int = max_retries) -> tuple[str, list[dict]]:
 
         if not question.strip():
             raise ValueError("La pregunta no puede estar vacía")
