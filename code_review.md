@@ -151,38 +151,43 @@ chroma_path = "./chroma_db"
 collection_name = "docs"
 top_k = 5
 max_history_turns = 10
+max_retries = 5
 
 chroma = chromadb.PersistentClient(path = chroma_path)
 chroma.get_or_create_collection(name = collection_name)
 
 # Función para realizar los embeddings de los documentos
 
-def embed(texts: list[str]) -> list[list[float]]:
+def embed(texts: list[str], max_retries: int) -> list[list[float]]:
     
     if not texts:
         return []
 
-    try:
-        response = openai.Embedding.create(
-            model=embedding_model,
-            input=texts,
-            api_key=API_KEY
-        )
-        return [item["embedding"] for item in response["data"]]
-    except Exception as e:
-        print(f"Error creando los embeddings: {e}")
-        return []
+    for attempt in range(max_retries):
+        try:
+            response = openai.Embedding.create(
+                model=embedding_model,
+                input=texts,
+                api_key=API_KEY
+            )
+            return [item["embedding"] for item in response["data"]
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Error creando los embeddings (intento {attempt + 1}/{max_retries}): {e}")
+            else:
+                print(f"Error creando los embeddings después de {max_retries} intentos: {e}")
+                return []
 
 # Función ingest_documents
 
-def ingest_documents(documents: Iterable[str]) -> int:
+def ingest_documents(documents: Iterable[str], max_retries: int) -> int:
     
     docs = [doc.strip() for doc in documents if doc and doc.strip()]
     
     if not docs:
         return 0
         
-    embeddings = embed(docs)
+    embeddings = embed(docs, max_retries)
 
     chroma.get_or_create_collection(name = collection_name).upsert(
             documents=docs,
@@ -195,13 +200,13 @@ def ingest_documents(documents: Iterable[str]) -> int:
 
 # Función retrieve para RAG
 
-def retrieve(question: str, top_k: int) -> list[dict]:
+def retrieve(question: str, top_k: int, max_retries: int) -> list[dict]:
 
     if not question.strip():
         raise ValueError("La pregunta no puede estar vacía")
 
     k = top_k
-    query_embedding = embed([question])[0]
+    query_embedding = embed([question], max_retries)[0]
 
     results = chroma.get_or_create_collection(name = collection_name).query(query_embeddings=[query_embedding], n_results=k)
     documents = results["documents"][0]
@@ -227,13 +232,13 @@ def build_context(retrieved: list[dict]) -> str:
 
 # Función ask para realizar la consulta al modelo de lenguaje
 
-def ask(question: str, history: list[tuple[str, str]] | None = None) -> tuple[str, list[dict]]:
+def ask(question: str, history: list[tuple[str, str]] | None = None, max_retries: int) -> tuple[str, list[dict]]:
 
         if not question.strip():
             raise ValueError("La pregunta no puede estar vacía")
 
         history = history or []
-        retrieved = retrieve(question)
+        retrieved = retrieve(question, max_retries)
         context = build_context(retrieved)
 
         recent_history = history[-max_history_turns:]
@@ -273,7 +278,18 @@ def ask(question: str, history: list[tuple[str, str]] | None = None) -> tuple[st
             ),
         })
 
-        response = openai.chat.completions.create(model = llm_model, messages = messages, api_key = API_KEY)
+        retry_count = 0
+        response = None
+
+        while retry_count < max_retries:
+            try:
+                response = openai.chat.completions.create(model = llm_model, messages = messages, api_key = API_KEY)
+                break
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise Exception(f"Failed after {max_retries} attempts: {str(e)}")
+                time.sleep(2 ** retry_count)
 
         answer = response.choices[0].message.content or ""
 
