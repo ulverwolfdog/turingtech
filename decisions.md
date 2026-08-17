@@ -51,7 +51,7 @@ Una decisión de diseño fue no usar MCP, todas las tools son funciones Python e
 
 ### Principales decisiones del diseño
 
-- **Groq como LLM**: Modelo por defecto: `llama-3.3-70b-versatile` (configurable con la variable de   entorno `GROQ_MODEL`).
+- **Groq como LLM**: Modelo por defecto: `openai/gpt-oss-120b` (configurable con la variable de   entorno `GROQ_MODEL`).
 - **Embeddings locales**: Se usa un modelo local de HuggingFace
   (`sentence-transformers`).
 - **Grounding obligatorio**: El prompt del `rag_agent` obliga a llamar

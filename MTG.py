@@ -55,7 +55,7 @@ INDEX_DIR = Path(".") / "index"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = "https://api.magicthegathering.io/v1"
 TIMEOUT_SECONDS = 10
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 chunk_size = 800
 chunk_overlap = 150
